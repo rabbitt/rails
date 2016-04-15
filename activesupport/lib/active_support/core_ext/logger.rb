@@ -17,6 +17,7 @@ class Logger #:nodoc:
 end
 
 require 'logger'
+require 'thread_safe'
 
 # Extensions to the built-in Ruby logger.
 #
@@ -36,21 +37,7 @@ class Logger
   # Set to false to disable the silencer
   cattr_accessor :silencer
   self.silencer = true
-
-  # Silences the logger for the duration of the block.
-  def silence(temporary_level = Logger::ERROR)
-    if silencer
-      begin
-        old_logger_level, self.level = level, temporary_level
-        yield self
-      ensure
-        self.level = old_logger_level
-      end
-    else
-      yield self
-    end
-  end
-  deprecate :silence
+  attr_reader :local_levels
 
   alias :old_datetime_format= :datetime_format=
   # Logging date-time format (string passed to +strftime+). Ignored if the formatter
@@ -68,10 +55,56 @@ class Logger
 
   alias :old_initialize :initialize
   # Overwrite initialize to set a default formatter.
+
   def initialize(*args)
     old_initialize(*args)
     self.formatter = SimpleFormatter.new
+    @local_levels  = ThreadSafe::Cache.new(:initial_capacity => 2)
   end
+
+  alias_method :old_add, :add
+  def add(severity, message = nil, progname = nil, &block)
+    return true if @logdev.nil? || (severity || UNKNOWN) < level
+    old_add(severity, message, progname, &block)
+  end
+
+  Logger::Severity.constants.each do |severity|
+    class_eval(<<-EOT, __FILE__, __LINE__ + 1)
+      undef :#{severity.downcase}? if method_defined? :#{severity.downcase}?
+      def #{severity.downcase}?                # def debug?
+        Logger::#{severity} >= level           #   DEBUG >= level
+      end                                      # end
+    EOT
+  end
+
+  def local_log_id
+    Thread.current.__id__
+  end
+
+  def level
+    local_levels[local_log_id] || @level
+  end
+
+  # Silences the logger for the duration of the block.
+  def silence(temporary_level = Logger::ERROR)
+    if silencer
+      begin
+        old_local_level            = local_levels[local_log_id]
+        local_levels[local_log_id] = temporary_level
+
+        yield self
+      ensure
+        if old_local_level
+          local_levels[local_log_id] = old_local_level
+        else
+          local_levels.delete(local_log_id)
+        end
+      end
+    else
+      yield self
+    end
+  end
+  deprecate :silence
 
   # Simple formatter which only displays the message.
   class SimpleFormatter < Logger::Formatter

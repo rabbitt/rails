@@ -46,10 +46,11 @@ module ActiveSupport
     # Silence the logger during the execution of the block.
     #
     def silence
-      old_logger_level, logger.level = logger.level, ::Logger::ERROR if logger
-      yield
-    ensure
-      logger.level = old_logger_level if logger
+      if logger
+        logger.silence(::Logger::ERROR) { yield }
+      else
+        yield
+      end
     end
   end
 end

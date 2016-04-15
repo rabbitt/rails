@@ -28,24 +28,14 @@ module ActiveSupport
 
     # Silences the logger for the duration of the block.
     def silence(temporary_level = ERROR)
-      if silencer
-        begin
-          logger = self.class.new @log_dest.dup, temporary_level
-          yield logger
-        ensure
-          logger.close
-        end
-      else
-        yield self
-      end
+      @log.silence(temporary_level) { yield }
     end
-    deprecate :silence
 
     attr_reader :auto_flushing
     deprecate :auto_flushing
 
     def initialize(log, level = DEBUG)
-      @log_dest      = log
+      @log_dest = log
 
       unless log.respond_to?(:write)
         unless File.exist?(File.dirname(log))
